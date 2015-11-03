@@ -8,11 +8,15 @@ import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.Host;
 import com.datastax.driver.core.Metadata;
+import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.MoreExecutors;
 
 public class AsyncClient {
     
@@ -44,7 +48,7 @@ public class AsyncClient {
         final long st = System.nanoTime();
         for(int i=0; i<totalOps; i++)
         {
-            int batchSize = (int) Math.round(1);
+            int batchSize = (int) Math.round(dist.sample());
             if(batchSize <= 0)
                 batchSize = 1;
             Set<String> keys = new HashSet<String>();
@@ -87,25 +91,21 @@ public class AsyncClient {
         long test2 = System.nanoTime();
         long timeElapsed = test2 - test1;
         //System.out.println("Time to execute task = " + timeElapsed + " ns" + "Done: " + rs.isDone());
-//        Futures.addCallback(rs,
-//                new FutureCallback<ResultSet>() {
-//                    @Override public void onSuccess(ResultSet result) {
-//                        long en=System.nanoTime();
-//                        //while (!result.isExhausted()) {
-//                        //    Row row = result.one(); //For now, we do nothing with the returned results
-//                        //}
-//                        dbWrapper.measure("READMULTI",ist, st, en);
-//                        dbWrapper._measurements.reportReturnCode("READMULTI",OK);
-//                    }
-//             
-//                    @Override public void onFailure(Throwable t) {
-//                        System.out.println("Error reading query: " + t.getMessage());
-//                        long en=System.nanoTime();
-//                        dbWrapper.measure("READMULTI",ist, st, en);
-//                        dbWrapper._measurements.reportReturnCode("READMULTI",ERR);
-//                    }
-//                },
-//                MoreExecutors.sameThreadExecutor()
-//         );
+        Futures.addCallback(rs,
+                new FutureCallback<ResultSet>() {
+                    public void onSuccess(ResultSet result) {
+                        long en=System.nanoTime();
+                        //while (!result.isExhausted()) {
+                        //    Row row = result.one(); //For now, we do nothing with the returned results
+                        //}
+                    }
+             
+                    public void onFailure(Throwable t) {
+                        System.out.println("Error reading query: " + t.getMessage());
+                        long en=System.nanoTime();
+                    }
+                },
+                MoreExecutors.sameThreadExecutor()
+         );
     }
 }

@@ -7,6 +7,7 @@ import org.apache.commons.math3.distribution.NormalDistribution;
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.Host;
+import com.datastax.driver.core.HostDistance;
 import com.datastax.driver.core.Metadata;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
@@ -28,7 +29,10 @@ public class AsyncClient {
         Session session;
         
      // Connect to the cluster and keyspace "demo"
-        cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
+        cluster = Cluster.builder().addContactPoint("192.168.100.4").build();
+        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 1200, 1200);
+        cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 128);
+
         session = cluster.connect("ycsb");
         
         Metadata metadata = cluster.getMetadata();

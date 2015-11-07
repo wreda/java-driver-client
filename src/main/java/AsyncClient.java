@@ -20,18 +20,22 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 
 public class AsyncClient {
-    
+    static long invocation = 0;
+
     public static void main(String[] args) {
-        
         int totalOps = 1000000;
         int seed = 46;
         Cluster cluster;
         Session session;
+        NormalDistribution dist = new NormalDistribution(8.0, 2.0);
+        Random rng = new Random(seed);
+        dist.reseedRandomGenerator(seed);
         
+        final long st_setup = System.nanoTime();
      // Connect to the cluster and keyspace "demo"
         cluster = Cluster.builder().addContactPoint("192.168.100.4").build();
-        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 1200, 1200);
-        cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 128);
+        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
+        cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
 
         session = cluster.connect("ycsb");
         
@@ -44,14 +48,13 @@ public class AsyncClient {
                 discoveredHost.getAddress(),
                 discoveredHost.getRack());
         }
-        
-        NormalDistribution dist = new NormalDistribution(5.0, 2.0);
-        Random rng = new Random(seed);
-        dist.reseedRandomGenerator(seed);
+        final long et_setup = System.nanoTime();
+        System.out.println("Setup completed in " + (et_setup - st_setup) + "ns");       
         
         final long st = System.nanoTime();
         for(int i=0; i<totalOps; i++)
         {
+	    //int batchSize = 1;
             int batchSize = (int) Math.round(dist.sample());
             if(batchSize <= 0)
                 batchSize = 1;
@@ -77,6 +80,7 @@ public class AsyncClient {
         Statement stmt;
         Select.Builder selectBuilder;
 
+        invocation += 1;
         if (fields == null) {
             selectBuilder = QueryBuilder.select().all();
         }
@@ -94,7 +98,7 @@ public class AsyncClient {
         ResultSetFuture rs = session.executeAsync(stmt);
         long test2 = System.nanoTime();
         long timeElapsed = test2 - test1;
-        //System.out.println("Time to execute task = " + timeElapsed + " ns" + "Done: " + rs.isDone());
+        System.out.println("Time to execute task " + invocation + "  = " + timeElapsed + " ns"); // + "Done: " + rs.isDone());
         Futures.addCallback(rs,
                 new FutureCallback<ResultSet>() {
                     public void onSuccess(ResultSet result) {

@@ -1,6 +1,4 @@
-import java.util.HashSet;
-import java.util.Random;
-import java.util.Set;
+import java.util.*;
 
 import org.apache.commons.math3.distribution.NormalDistribution;
 
@@ -27,6 +25,7 @@ public class AsyncClient {
         int seed = 46;
         Cluster cluster;
         Session session;
+        List<ResultSetFuture> results = new ArrayList<>(totalOps);
         NormalDistribution dist = new NormalDistribution(8.0, 2.0);
         Random rng = new Random(seed);
         dist.reseedRandomGenerator(seed);
@@ -36,6 +35,10 @@ public class AsyncClient {
         cluster = Cluster.builder().addContactPoint("192.168.100.4").build();
         cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
         cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
+
+//        cluster = Cluster.builder().addContactPoint("127.0.0.1").addContactPoint("127.0.0.2").build();
+//        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 1, 1);
+//        cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 5000);
 
         session = cluster.connect("ycsb");
         
@@ -61,20 +64,29 @@ public class AsyncClient {
             Set<String> keys = new HashSet<String>();
             for(int j=0; j<batchSize; j++)
             {
-                int k = Integer.toString(rng.nextInt()).hashCode();
-                k = k % totalOps;
-                keys.add(Integer.toString(k));
+                int k = rng.nextInt(100000); // Number of IDs in usertable is 100000
+                keys.add("user" + Integer.toString(k));
             }
             Set<String> fields = new HashSet<String>();
             fields.add("field0");
-            readMulti_nonBlocking("usertable", keys, fields, session);
+            ResultSetFuture rsf = readMulti_nonBlocking("usertable", keys, fields, session);
+            results.add(rsf);
         }
         final long et = System.nanoTime();
         double duration = (et - st)/1.0E9;
         System.out.println("Completed " + totalOps + " operations in " + duration + " seconds");
+        int count = 1;
+        for (ResultSetFuture rsf : results) {
+            ResultSet rs = rsf.getUninterruptibly();
+            System.out.println("RS" + count + " latency: " + rs.latency() + " ns");
+            count++;
+        }
+        session.close();
+        cluster.close();
+        System.out.println("All done");
     }
     
-    public static void readMulti_nonBlocking(String table, Set<String> keys, Set<String> fields, Session session)
+    public static ResultSetFuture readMulti_nonBlocking(String table, Set<String> keys, Set<String> fields, Session session)
      {
         final long st = System.nanoTime();
         Statement stmt;
@@ -92,28 +104,31 @@ public class AsyncClient {
         }
 
         stmt = selectBuilder.from(table).where(QueryBuilder.in("y_id", keys.toArray())).limit(keys.size());
+        System.out.println(stmt.toString());
         stmt.setConsistencyLevel(ConsistencyLevel.valueOf("ONE"));
 
         long test1 = System.nanoTime();
         ResultSetFuture rs = session.executeAsync(stmt);
         long test2 = System.nanoTime();
         long timeElapsed = test2 - test1;
-        System.out.println("Time to execute task " + invocation + "  = " + timeElapsed + " ns"); // + "Done: " + rs.isDone());
-        Futures.addCallback(rs,
-                new FutureCallback<ResultSet>() {
-                    public void onSuccess(ResultSet result) {
-                        long en=System.nanoTime();
-                        //while (!result.isExhausted()) {
-                        //    Row row = result.one(); //For now, we do nothing with the returned results
-                        //}
-                    }
-             
-                    public void onFailure(Throwable t) {
-                        System.out.println("Error reading query: " + t.getMessage());
-                        long en=System.nanoTime();
-                    }
-                },
-                MoreExecutors.sameThreadExecutor()
-         );
+        System.out.println("Time to execute task " + invocation + "  = " + timeElapsed + " ns" + ". current thread = " + java.lang.Thread.currentThread() ); // + "Done: " + rs.isDone());
+//        Futures.addCallback(rs,
+//                new FutureCallback<ResultSet>() {
+//                    public void onSuccess(ResultSet result) {
+//                        long en=System.nanoTime();
+//                        //while (!result.isExhausted()) {
+//                        //    Row row = result.one(); //For now, we do nothing with the returned results
+//                        //}
+//                        System.out.println("Received rs" + ". current thread = " + java.lang.Thread.currentThread());
+//                    }
+//
+//                    public void onFailure(Throwable t) {
+//                        System.out.println("Error reading query: " + t.getMessage());
+//                        long en=System.nanoTime();
+//                    }
+//                },
+//                MoreExecutors.sameThreadExecutor()
+//         );
+         return rs;
     }
 }

@@ -1,30 +1,32 @@
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import static java.util.concurrent.TimeUnit.MICROSECONDS;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
+import com.datastax.driver.core.*;
 import org.apache.commons.math3.distribution.NormalDistribution;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.Host;
-import com.datastax.driver.core.HostDistance;
-import com.datastax.driver.core.Metadata;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.ResultSetFuture;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
-import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.MoreExecutors;
+
+import generators.FileGenerator;
+import misc.Utils;
 
 public class AsyncClient {
     static long invocation = 0;
 
-    public static void main(String[] args) {
-        int totalOps = 1000000;
+    public static void main(String[] args) throws InterruptedException {
+        int totalOps = 100000;
+        int interarrival = 10; //Interarrival time in Microseconds
+        int ceilOps = 100000;
+        FileGenerator filegen = new FileGenerator("/Users/reda/git/cicero/trace-processing/third_simulatorTrace");
         int seed = 46;
         Cluster cluster;
         Session session;
+        CustomPercentileTracker tracker = CustomPercentileTracker
+                .builder(totalOps, 15000)
+                .build();
         List<ResultSetFuture> results = new ArrayList<>(totalOps);
         NormalDistribution dist = new NormalDistribution(8.0, 2.0);
         Random rng = new Random(seed);
@@ -32,9 +34,11 @@ public class AsyncClient {
         
         final long st_setup = System.nanoTime();
      // Connect to the cluster and keyspace "demo"
-        cluster = Cluster.builder().addContactPoint("192.168.100.4").build();
+        cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
         cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
         cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
+        cluster.register(tracker);
+        tracker.onRegister(cluster);
 
 //        cluster = Cluster.builder().addContactPoint("127.0.0.1").addContactPoint("127.0.0.2").build();
 //        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 1, 1);
@@ -52,41 +56,82 @@ public class AsyncClient {
                 discoveredHost.getRack());
         }
         final long et_setup = System.nanoTime();
-        System.out.println("Setup completed in " + (et_setup - st_setup) + "ns");       
+        System.out.println("Setup completed in " + (et_setup - st_setup) + " ns");
         
-        final long st = System.nanoTime();
+        final long st_trans = System.nanoTime();
+        Statement globalStmt = null;
         for(int i=0; i<totalOps; i++)
         {
-	    //int batchSize = 1;
-            int batchSize = (int) Math.round(dist.sample());
+            long st_asynccall = System.nanoTime();
+/*            int batchSize = (int) Math.round(dist.sample());
             if(batchSize <= 0)
                 batchSize = 1;
             Set<String> keys = new HashSet<String>();
             for(int j=0; j<batchSize; j++)
             {
-                int k = rng.nextInt(100000); // Number of IDs in usertable is 100000
-                keys.add("user" + Integer.toString(k));
+                int k = rng.nextInt(ceilOps); // Number of IDs in usertable is ceilOps
+                keys.add(buildKeyName(k);
+            }*/
+
+            List<String> task = readMultiGetFromFile(filegen);
+            for (int j = 0; j < task.size(); j++) {
+                long keyInt = Utils.hash(Integer.parseInt(task.get(j)));
+                keyInt = keyInt%100000;
+
+                //int keyInt = Integer.parseInt(task.get(i));
+                String kname = buildKeyName(keyInt);
+                task.set(j, kname);
             }
+
+            Set<String> keys = new HashSet<String>(task);
             Set<String> fields = new HashSet<String>();
             fields.add("field0");
-            ResultSetFuture rsf = readMulti_nonBlocking("usertable", keys, fields, session);
-            results.add(rsf);
+            Statement stmt = generateMultiGet("usertable", keys, fields, session);
+            ResultSetFuture rsf = session.executeAsync(stmt);
+            long et_asynccall = System.nanoTime();
+
+            MICROSECONDS.sleep(Math.min(interarrival-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
+
+//            Futures.addCallback(rsf, new FutureCallback<ResultSet>() {
+//                @Override
+//                public void onSuccess(ResultSet resultSet) {
+//                    //System.out.println("Updating tracker");
+//                    //AsyncClient.this.incrementRequestsRecv();
+//                }
+//
+//                @Override
+//                public void onFailure(Throwable throwable) {
+//                    System.out.printf("Failed with: %s\n", throwable);
+//                }
+//            });
+            //results.add(rsf);
         }
-        final long et = System.nanoTime();
-        double duration = (et - st)/1.0E9;
+        final long et_trans = System.nanoTime();
+        double duration = (et_trans - st_trans)/1.0E9;
         System.out.println("Completed " + totalOps + " operations in " + duration + " seconds");
-        int count = 1;
-        for (ResultSetFuture rsf : results) {
-            ResultSet rs = rsf.getUninterruptibly();
-            System.out.println("RS" + count + " latency: " + rs.latency() + " ns");
-            count++;
+
+        while(!tracker.isRunComplete() && NANOSECONDS.toSeconds(System.nanoTime() - tracker.getLastUpdateTS()) < 10)
+        {
+            SECONDS.sleep(5);
         }
+
+        System.out.println("[MULTIGET-SUCCESS] Count: " + tracker.getOpsCount());
+        if(!tracker.isRunComplete())
+            System.out.println("[MULTIGET-FAILURE] Count: " + (totalOps - tracker.getOpsCount()));
+
+        double latencyMedian = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), globalStmt, null, 50);
+        double latency95Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), globalStmt, null, 95);
+        double latency99Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), globalStmt, null, 99);
+
         session.close();
         cluster.close();
+        System.out.println("[MULTIGET] Median Latency (us):" + latencyMedian);
+        System.out.println("[MULTIGET] 95th Percentile Latency (us):" + latency95Perc);
+        System.out.println("[MULTIGET] 99th Percentile Latency (us):" + latency99Perc);
         System.out.println("All done");
     }
     
-    public static ResultSetFuture readMulti_nonBlocking(String table, Set<String> keys, Set<String> fields, Session session)
+    public static Statement generateMultiGet(String table, Set<String> keys, Set<String> fields, Session session)
      {
         final long st = System.nanoTime();
         Statement stmt;
@@ -104,31 +149,32 @@ public class AsyncClient {
         }
 
         stmt = selectBuilder.from(table).where(QueryBuilder.in("y_id", keys.toArray())).limit(keys.size());
-        System.out.println(stmt.toString());
+        //System.out.println(stmt.toString());
         stmt.setConsistencyLevel(ConsistencyLevel.valueOf("ONE"));
+        return stmt;
+    }
 
-        long test1 = System.nanoTime();
-        ResultSetFuture rs = session.executeAsync(stmt);
-        long test2 = System.nanoTime();
-        long timeElapsed = test2 - test1;
-        System.out.println("Time to execute task " + invocation + "  = " + timeElapsed + " ns" + ". current thread = " + java.lang.Thread.currentThread() ); // + "Done: " + rs.isDone());
-//        Futures.addCallback(rs,
-//                new FutureCallback<ResultSet>() {
-//                    public void onSuccess(ResultSet result) {
-//                        long en=System.nanoTime();
-//                        //while (!result.isExhausted()) {
-//                        //    Row row = result.one(); //For now, we do nothing with the returned results
-//                        //}
-//                        System.out.println("Received rs" + ". current thread = " + java.lang.Thread.currentThread());
-//                    }
-//
-//                    public void onFailure(Throwable t) {
-//                        System.out.println("Error reading query: " + t.getMessage());
-//                        long en=System.nanoTime();
-//                    }
-//                },
-//                MoreExecutors.sameThreadExecutor()
-//         );
-         return rs;
+    /**
+     * Reads and parses next line in the workload trace
+     * @throws UnsupportedOperationException
+     */
+    private static List<String> readMultiGetFromFile(FileGenerator filegen) throws UnsupportedOperationException
+    {
+        String line = filegen.nextString();
+        if(line == null)
+            return null;
+        List<String> task;
+        line.replaceAll("\n", "");
+        if(line.startsWith("R "))
+            task = new ArrayList(Arrays.asList(line.split(" ")));
+        else
+            throw new UnsupportedOperationException();
+        task.remove(0); //remove R
+        task.remove(task.size()-1); //remove interarrival modifier (no longer used)
+        return task;
+    }
+
+    public static String buildKeyName(long keynum) {
+        return "user" + keynum;
     }
 }

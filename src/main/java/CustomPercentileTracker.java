@@ -6,7 +6,6 @@ import com.datastax.driver.core.exceptions.*;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import org.HdrHistogram.Histogram;
 import org.HdrHistogram.Recorder;
 import org.slf4j.Logger;

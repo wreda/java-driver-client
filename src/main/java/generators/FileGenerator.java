@@ -52,7 +52,14 @@ public class FileGenerator extends Generator
     public synchronized String nextString()
     {
         try {
-            return current = reader.readLine();
+            current = reader.readLine();
+            if(current == null) //Reload if we hit the end-of-file
+            {
+                reloadFile();
+                return nextString();
+            }
+            else
+                return current;
         } catch(NullPointerException e) {
             System.err.println("NullPointerException: " + filename + ':' + current);
             throw e;

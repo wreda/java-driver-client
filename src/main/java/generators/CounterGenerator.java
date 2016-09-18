@@ -17,39 +17,41 @@
 
 package generators;
 
-import misc.Utils;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Generates integers randomly uniform from an interval.
+ * Generates a sequence of integers 0, 1, ...
  */
-public class UniformIntegerGenerator extends IntegerGenerator
+public class CounterGenerator extends IntegerGenerator
 {
-    int _lb,_ub,_interval;
+    final AtomicInteger counter;
 
     /**
-     * Creates a generator that will return integers uniformly randomly from the interval [lb,ub] inclusive (that is, lb and ub are possible values)
-     *
-     * @param lb the lower bound (inclusive) of generated values
-     * @param ub the upper bound (inclusive) of generated values
+     * Create a counter that starts at countstart
      */
-    public UniformIntegerGenerator(int lb, int ub)
+    public CounterGenerator(int countstart)
     {
-        _lb=lb;
-        _ub=ub;
-        _interval=_ub-_lb+1;
+        counter=new AtomicInteger(countstart);
+        setLastInt(counter.get()-1);
     }
 
-    @Override
+    /**
+     * If the generator returns numeric (integer) values, return the next value as an int. Default is to return -1, which
+     * is appropriate for generators that do not return numeric values.
+     */
     public int nextInt()
     {
-        int ret=Utils.random().nextInt(_interval)+_lb;
+        int ret = counter.getAndIncrement();
         setLastInt(ret);
-
         return ret;
     }
-
+    @Override
+    public int lastInt()
+    {
+        return counter.get() - 1;
+    }
     @Override
     public double mean() {
-        return ((double)((long)(_lb + (long)_ub))) / 2.0;
+        throw new UnsupportedOperationException("Can't compute mean of non-stationary distribution!");
     }
 }

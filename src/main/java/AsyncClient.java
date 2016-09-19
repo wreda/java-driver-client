@@ -192,13 +192,17 @@ public class AsyncClient {
     }
 
     public void readData() throws InterruptedException, ExecutionException {
+        int batchThreshold = 30;
         final long st_trans = System.nanoTime();
         double compensation = 0;
+        BatchStatement bStmt = new BatchStatement();
+        int count=0;
         //List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
         if(isTrace)
             System.out.println("Generating workload from trace file: " + filegen.getFilename());
         for(int i=0; i<totalOps; i++)
         {
+            count++;
             long st_asynccall = System.nanoTime();
 
             List<String> task = new ArrayList<String>();
@@ -230,7 +234,13 @@ public class AsyncClient {
             Set<String> fields = new HashSet<String>();
             fields.add("field0");
             Statement stmt = generateMultiGet("usertable", keys, fields);
-            ResultSetFuture rsf = session.executeAsync(stmt);
+            bStmt.add(stmt);
+            bStmt.disableTracing();
+
+            if(count == batchThreshold || i==totalOps) {
+                ResultSetFuture rsf = session.executeAsync(bStmt);
+            }
+
             long et_asynccall = System.nanoTime();
 
             int delay = arrivalGen.nextInt();

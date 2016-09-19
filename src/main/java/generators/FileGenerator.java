@@ -92,4 +92,9 @@ public class FileGenerator extends Generator
             System.err.println("Exception: " + e);
         }
     }
+
+    public String getFilename()
+    {
+        return filename;
+    }
 }

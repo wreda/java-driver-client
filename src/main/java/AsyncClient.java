@@ -1,4 +1,6 @@
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -36,7 +38,7 @@ public class AsyncClient {
     boolean isTrace;
     int seed = 46;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) throws InterruptedException, ExecutionException {
         AsyncClient client = new AsyncClient();
         CommandLine commandLine = client.parseArgs(args);
         System.out.println(commandLine.getOptions());
@@ -52,7 +54,7 @@ public class AsyncClient {
         hostIP = cmd.getOptionValue("host", "127.0.0.1");
         totalOps = Integer.parseInt(cmd.getOptionValue("ops", "10000000"));
         utilization = Integer.parseInt(cmd.getOptionValue("util", "75"));
-        isTrace = cmd.getOptionValue("workload", "trace") == "trace";
+        isTrace = cmd.getOptionValue("workload", "trace").equals("trace");
         filegen = new FileGenerator(cmd.getOptionValue("trc",
                     "/Users/reda/git/cicero/trace-processing/third_simulatorTrace"));
 
@@ -65,24 +67,14 @@ public class AsyncClient {
         int skwParam = Integer.parseInt(cmd.getOptionValue("skwp", "2"));
         int valueParam = Integer.parseInt(cmd.getOptionValue("valuep", "1000"));
 
-        if(bszDist == "normal")
+        if(bszDist.equals("normal"))
             bszGenerator = new NormalGenerator(bszParam, 0.75);
-        else if(bszDist == "zipfian")
+        else if(bszDist.equals("zipfian"))
             bszGenerator = new ZipfianGenerator(1, 5000, bszParam); //How do we set upper/lower limits?
-        else if(bszDist == "constant")
+        else if(bszDist.equals("constant"))
             bszGenerator = new ConstantGenerator(bszParam);
 
-        if(skewDist == "zipfian")
-            skwGenerator = new ZipfianGenerator(ceilOps, skwParam);
-        else if(skewDist == "constant")
-            skwGenerator = new UniformIntegerGenerator(1, ceilOps);
-
-        if(valueDist == "fbmemcached")
-            valueGenerator = new FBMemcacheGenerator();
-        else if(valueDist == "constant")
-            valueGenerator = new ConstantGenerator(valueParam);
-
-        if(expScenario == "memory")
+        if(expScenario.equals("memory"))
         {
             ceilOps = 100000;
             double compensation = isTrace ? 8 : bszGenerator.mean();
@@ -99,6 +91,16 @@ public class AsyncClient {
             else
                 interarrival = 800;
         }
+
+        if(skewDist.equals("zipfian"))
+            skwGenerator = new ZipfianGenerator(ceilOps, skwParam);
+        else if(skewDist.equals("uniform"))
+            skwGenerator = new UniformIntegerGenerator(1, ceilOps);
+
+        if(valueDist.equals("fbpareto"))
+            valueGenerator = new FBMemcacheGenerator();
+        else if(valueDist.equals("constant"))
+            valueGenerator = new ConstantGenerator(valueParam);
 
         if(isRead)
             arrivalGen = new PoissonGenerator(interarrival);
@@ -139,20 +141,24 @@ public class AsyncClient {
         System.out.println("Setup completed in " + (et_setup - st_setup) + " ns");
     }
 
-    public void runWorkload() throws InterruptedException {
+    public void runWorkload() throws InterruptedException, ExecutionException {
         if(isRead)
             readData();
         else
             writeData();
     }
 
-    public void readData() throws InterruptedException {
+    public void readData() throws InterruptedException, ExecutionException {
         final long st_trans = System.nanoTime();
+        List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
+        if(isTrace)
+            System.out.println("Generating workload from trace file: " + filegen.getFilename());
         for(int i=0; i<totalOps; i++)
         {
             long st_asynccall = System.nanoTime();
 
             List<String> task = new ArrayList<String>();
+
             if(isTrace) {
                 task = readMultiGetFromFile(filegen);
                 for (int j = 0; j < task.size(); j++) {
@@ -198,7 +204,7 @@ public class AsyncClient {
 //                    System.out.printf("Failed with: %s\n", throwable);
 //                }
 //            });
-            //results.add(rsf);
+            results.add(rsf);
         }
         final long et_trans = System.nanoTime();
         double duration = (et_trans - st_trans)/1.0E9;
@@ -209,9 +215,17 @@ public class AsyncClient {
             SECONDS.sleep(5);
         }
 
+        int notFoundCount = 0;
+        for(ResultSetFuture r: results) {
+            if(r.get().all().size() == 0)
+                notFoundCount += 1;
+        }
         System.out.println("[MULTIGET-SUCCESS] Count: " + tracker.getOpsCount());
         if(!tracker.isRunComplete())
             System.out.println("[MULTIGET-FAILURE] Count: " + (totalOps - tracker.getOpsCount()));
+
+        if(notFoundCount>0)
+            System.out.println("[WARNING] " + notFoundCount + " successful requests returned an empty response");
 
         double latencyMedian = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 50);
         double latency95Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 95);
@@ -219,9 +233,9 @@ public class AsyncClient {
 
         session.close();
         cluster.close();
-        System.out.println("[MULTIGET] Median Latency (us):" + latencyMedian);
-        System.out.println("[MULTIGET] 95th Percentile Latency (us):" + latency95Perc);
-        System.out.println("[MULTIGET] 99th Percentile Latency (us):" + latency99Perc);
+        System.out.println("[MULTIGET] Median Latency (us): " + latencyMedian);
+        System.out.println("[MULTIGET] 95th Percentile Latency (us): " + latency95Perc);
+        System.out.println("[MULTIGET] 99th Percentile Latency (us): " + latency99Perc);
         System.out.println("Throughput: " + tracker.getOpsCount()/NANOSECONDS.toSeconds(tracker.getLastUpdateTS()
                             - st_trans) + " reqs/sec");
         System.out.println("Sending rate: " + totalOps/NANOSECONDS.toSeconds(et_trans - st_trans) + " reqs/sec");
@@ -231,7 +245,7 @@ public class AsyncClient {
     public void writeData() throws InterruptedException
     {
         final long st_trans = System.nanoTime();
-        for(int i=1; i<ceilOps; i++)
+        for(int i=0; i<ceilOps; i++)
         {
             long st_asynccall = System.nanoTime();
             String kname = buildKeyName(i);
@@ -247,7 +261,7 @@ public class AsyncClient {
         }
         final long et_trans = System.nanoTime();
         double duration = (et_trans - st_trans)/1.0E9;
-        System.out.println("Completed " + totalOps + " operations in " + duration + " seconds");
+        System.out.println("Completed " + ceilOps + " operations in " + duration + " seconds");
 
         while(!tracker.isRunComplete() && NANOSECONDS.toSeconds(System.nanoTime() - tracker.getLastUpdateTS()) < 10)
         {
@@ -256,7 +270,7 @@ public class AsyncClient {
 
         System.out.println("[WRITE-SUCCESS] Count: " + tracker.getOpsCount());
         if(!tracker.isRunComplete())
-            System.out.println("[WRITE-FAILURE] Count: " + (totalOps - tracker.getOpsCount()));
+            System.out.println("[WRITE-FAILURE] Count: " + (ceilOps - tracker.getOpsCount()));
 
         double latencyMedian = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 50);
         double latency95Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 95);
@@ -264,12 +278,12 @@ public class AsyncClient {
 
         session.close();
         cluster.close();
-        System.out.println("[WRITE] Median Latency (us):" + latencyMedian);
-        System.out.println("[WRITE] 95th Percentile Latency (us):" + latency95Perc);
-        System.out.println("[WRITE] 99th Percentile Latency (us):" + latency99Perc);
+        System.out.println("[WRITE] Median Latency (us): " + latencyMedian);
+        System.out.println("[WRITE] 95th Percentile Latency (us): " + latency95Perc);
+        System.out.println("[WRITE] 99th Percentile Latency (us): " + latency99Perc);
         System.out.println("Throughput: " + tracker.getOpsCount()/NANOSECONDS.toSeconds(tracker.getLastUpdateTS()
                 - st_trans) + " reqs/sec");
-        System.out.println("Sending rate: " + totalOps/NANOSECONDS.toSeconds(et_trans - st_trans) + " reqs/sec");
+        System.out.println("Sending rate: " + ceilOps/NANOSECONDS.toSeconds(et_trans - st_trans) + " reqs/sec");
         System.out.println("All done");
     }
     
@@ -290,8 +304,10 @@ public class AsyncClient {
         }
 
         stmt = selectBuilder.from(table).where(QueryBuilder.in("y_id", keys.toArray())).limit(keys.size());
+
         //System.out.println(stmt.toString());
         stmt.setConsistencyLevel(ConsistencyLevel.valueOf("ONE"));
+        stmt.setFetchSize(Integer.MAX_VALUE);
         return stmt;
     }
 

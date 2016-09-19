@@ -173,14 +173,14 @@ public class AsyncClient {
 
     private PoolingOptions createPoolingOptions(){
         return new PoolingOptions()
-                .setCoreConnectionsPerHost(HostDistance.LOCAL, 10) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
-                .setMaxConnectionsPerHost(HostDistance.LOCAL, 50) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
+                .setCoreConnectionsPerHost(HostDistance.LOCAL, 1) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
+                .setMaxConnectionsPerHost(HostDistance.LOCAL, 1) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
 
-                .setCoreConnectionsPerHost(HostDistance.REMOTE, 10) //Core connections for REMOTE hosts must be less than max (54 > 2)
-                .setMaxConnectionsPerHost(HostDistance.REMOTE, 50)
+                .setCoreConnectionsPerHost(HostDistance.REMOTE, 1) //Core connections for REMOTE hosts must be less than max (54 > 2)
+                .setMaxConnectionsPerHost(HostDistance.REMOTE, 1)
 
-                .setMaxRequestsPerConnection(HostDistance.LOCAL, 3000) //Max simultaneous requests per connection for LOCAL hosts must be in the range (0, 128)
-                .setMaxRequestsPerConnection(HostDistance.REMOTE, 3000); //Max simultaneous requests per connection for REMOTE hosts must be in the range (0, 128)
+                .setMaxRequestsPerConnection(HostDistance.LOCAL, 5000) //Max simultaneous requests per connection for LOCAL hosts must be in the range (0, 128)
+                .setMaxRequestsPerConnection(HostDistance.REMOTE, 5000); //Max simultaneous requests per connection for REMOTE hosts must be in the range (0, 128)
 
     }
 

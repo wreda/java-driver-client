@@ -1,11 +1,15 @@
 import java.util.*;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.datastax.driver.core.*;
+import com.datastax.driver.core.policies.LoadBalancingPolicy;
 import com.datastax.driver.core.querybuilder.Insert;
 import generators.*;
 import misc.ByteIterator;
@@ -35,7 +39,8 @@ public class AsyncClient {
     IntegerGenerator valueGenerator;
     IntegerGenerator arrivalGen;
     String hostIP;
-    boolean isTrace;
+    boolean isTrace; //Workload is generated using a trace file
+    boolean isDebug = false;
     int seed = 46;
 
     public static void main(String[] args) throws InterruptedException, ExecutionException {
@@ -50,6 +55,7 @@ public class AsyncClient {
     private void init(CommandLine cmd)
     {
         System.out.println(cmd);
+        isDebug = cmd.hasOption("debug");
         isRead = cmd.hasOption("read");
         hostIP = cmd.getOptionValue("host", "127.0.0.1");
         totalOps = Integer.parseInt(cmd.getOptionValue("ops", "10000000"));
@@ -121,6 +127,29 @@ public class AsyncClient {
         //cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
         //cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
         cluster.register(tracker);
+
+        if(isDebug) {
+            final LoadBalancingPolicy loadBalancingPolicy =
+                    cluster.getConfiguration().getPolicies().getLoadBalancingPolicy();
+            final PoolingOptions poolingOptions =
+                    cluster.getConfiguration().getPoolingOptions();
+            ScheduledExecutorService scheduled =
+                    Executors.newScheduledThreadPool(1);
+            scheduled.scheduleAtFixedRate(new Runnable() {
+                @Override
+                public void run() {
+                    Session.State state = session.getState();
+                    for (Host host : state.getConnectedHosts()) {
+                        HostDistance distance = loadBalancingPolicy.distance(host);
+                        int connections = state.getOpenConnections(host);
+                        int inFlightQueries = state.getInFlightQueries(host);
+                        System.out.printf("%s connections=%d, current load=%d, max load=%d%n",
+                                host, connections, inFlightQueries, connections * poolingOptions.getMaxRequestsPerConnection(distance));
+                    }
+                }
+            }, 5, 5, TimeUnit.SECONDS);
+        }
+
 //        tracker.onRegister(cluster);
 
 //        cluster = Cluster.builder().addContactPoint("127.0.0.1").addContactPoint("127.0.0.2").build();
@@ -471,6 +500,9 @@ public class AsyncClient {
                 .type(Integer.class)
                 .argName("ip")
                 .build();
+        Option option_O = Option.builder("debug")
+                .desc("Enable debugging mode")
+                .build();
 
         Options options = new Options();
         options.addOption(option_A);
@@ -487,6 +519,7 @@ public class AsyncClient {
         options.addOption(option_L);
         options.addOption(option_M);
         options.addOption(option_N);
+        options.addOption(option_O);
 
         CommandLineParser parser = new DefaultParser();
         try

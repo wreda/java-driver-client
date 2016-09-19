@@ -151,7 +151,7 @@ public class AsyncClient {
 
     public void readData() throws InterruptedException, ExecutionException {
         final long st_trans = System.nanoTime();
-        List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
+        //List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
         if(isTrace)
             System.out.println("Generating workload from trace file: " + filegen.getFilename());
         for(int i=0; i<totalOps; i++)
@@ -205,7 +205,7 @@ public class AsyncClient {
 //                    System.out.printf("Failed with: %s\n", throwable);
 //                }
 //            });
-            results.add(rsf);
+            //results.add(rsf);
         }
         final long et_trans = System.nanoTime();
         double duration = (et_trans - st_trans)/1.0E9;
@@ -216,17 +216,17 @@ public class AsyncClient {
             SECONDS.sleep(5);
         }
 
-        int notFoundCount = 0;
-        for(ResultSetFuture r: results) {
-            if(r.get().all().size() == 0)
-                notFoundCount += 1;
-        }
+        //int notFoundCount = 0;
+        //for(ResultSetFuture r: results) {
+        //    if(r.get().all().size() == 0)
+        //        notFoundCount += 1;
+        //}
         System.out.println("[MULTIGET-SUCCESS] Count: " + tracker.getOpsCount());
         if(!tracker.isRunComplete())
             System.out.println("[MULTIGET-FAILURE] Count: " + (totalOps - tracker.getOpsCount()));
 
-        if(notFoundCount>0)
-            System.out.println("[WARNING] " + notFoundCount + " successful requests returned an empty response");
+        //if(notFoundCount>0)
+        //    System.out.println("[WARNING] " + notFoundCount + " successful requests returned an empty response");
 
         double latencyMedian = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 50);
         double latency95Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 95);

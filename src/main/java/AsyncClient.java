@@ -68,7 +68,7 @@ public class AsyncClient {
         int valueParam = Integer.parseInt(cmd.getOptionValue("valuep", "1000"));
 
         if(bszDist.equals("normal"))
-            bszGenerator = new NormalGenerator(bszParam, 0.75);
+            bszGenerator = new NormalGenerator(bszParam, 75);
         else if(bszDist.equals("zipfian"))
             bszGenerator = new ZipfianGenerator(1, 5000, bszParam); //How do we set upper/lower limits?
         else if(bszDist.equals("constant"))
@@ -113,13 +113,13 @@ public class AsyncClient {
         tracker = CustomPercentileTracker
                 .builder(totalOps, 15000)
                 .build();
-        List<ResultSetFuture> results = new ArrayList<>(totalOps);
+        //List<ResultSetFuture> results = new ArrayList<>(totalOps);
 
         final long st_setup = System.nanoTime();
         // Connect to the cluster and keyspace "demo"
-        cluster = Cluster.builder().addContactPoint(hostIP).build();
-        cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
-        cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
+        cluster = Cluster.builder().addContactPoint(hostIP).withPoolingOptions(createPoolingOptions()).build();
+        //cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
+        //cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
         cluster.register(tracker);
 //        tracker.onRegister(cluster);
 
@@ -142,6 +142,19 @@ public class AsyncClient {
         System.out.println("Setup completed in " + (et_setup - st_setup) + " ns");
     }
 
+    private PoolingOptions createPoolingOptions(){
+        return new PoolingOptions()
+                .setCoreConnectionsPerHost(HostDistance.LOCAL, 10) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
+                .setMaxConnectionsPerHost(HostDistance.LOCAL, 50) //Core connections for LOCAL hosts must be less than max (54 > 8) ???
+
+                .setCoreConnectionsPerHost(HostDistance.REMOTE, 10) //Core connections for REMOTE hosts must be less than max (54 > 2)
+                .setMaxConnectionsPerHost(HostDistance.REMOTE, 50)
+
+                .setMaxRequestsPerConnection(HostDistance.LOCAL, 3000) //Max simultaneous requests per connection for LOCAL hosts must be in the range (0, 128)
+                .setMaxRequestsPerConnection(HostDistance.REMOTE, 3000); //Max simultaneous requests per connection for REMOTE hosts must be in the range (0, 128)
+
+    }
+
     public void runWorkload() throws InterruptedException, ExecutionException {
         if(isRead)
             readData();
@@ -151,6 +164,7 @@ public class AsyncClient {
 
     public void readData() throws InterruptedException, ExecutionException {
         final long st_trans = System.nanoTime();
+        double compensation = 0;
         //List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
         if(isTrace)
             System.out.println("Generating workload from trace file: " + filegen.getFilename());
@@ -191,6 +205,7 @@ public class AsyncClient {
             long et_asynccall = System.nanoTime();
 
             int delay = arrivalGen.nextInt();
+            //compensation += (delay - NANOSECONDS.toMicros(et_asynccall-st_asynccall));
             MICROSECONDS.sleep(Math.min(delay-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
 
 //            Futures.addCallback(rsf, new FutureCallback<ResultSet>() {

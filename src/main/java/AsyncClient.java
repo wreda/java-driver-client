@@ -19,8 +19,8 @@ import misc.Utils;
 
 public class AsyncClient {
 
-    int MEMORY_READ_SATURATION_INTERARRIVAL;
-    int DISK_READ_SATURATION_INTERARRIVAL;
+    double MEMORY_READ_SATURATION_INTERARRIVAL=30; //interarrival required to saturate system for memory reads
+    double DISK_READ_SATURATION_INTERARRIVAL=100; //interarrival required to saturate system for disk reads
     int totalOps;
     int utilization;
     int interarrival; //Interarrival time in Microseconds
@@ -79,15 +79,16 @@ public class AsyncClient {
             ceilOps = 100000;
             double compensation = isTrace ? 8 : bszGenerator.mean();
             if(isRead)
-                interarrival = (int)(30.0 / (((double)utilization)/100.0) / compensation);
+                interarrival = (int)(MEMORY_READ_SATURATION_INTERARRIVAL / (((double)utilization)/100.0) / compensation);
             else
                 interarrival = 800;
         }
         else
         {
             ceilOps = 250000000;
+            double compensation = isTrace ? 8 : bszGenerator.mean();
             if(isRead)
-                interarrival = (int) (100.0 / (utilization/100.0));
+                interarrival = (int) (DISK_READ_SATURATION_INTERARRIVAL /(((double)utilization)/100.0) / compensation);
             else
                 interarrival = 800;
         }

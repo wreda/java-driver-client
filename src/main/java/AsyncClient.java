@@ -239,6 +239,7 @@ public class AsyncClient {
 
             if(count == batchThreshold || i==totalOps) {
                 ResultSetFuture rsf = session.executeAsync(bStmt);
+                bStmt = new BatchStatement();
             }
 
             long et_asynccall = System.nanoTime();

@@ -117,7 +117,7 @@ public class AsyncClient {
 
     public void setupCluster() throws InterruptedException {
         tracker = CustomPercentileTracker
-                .builder(totalOps, 15000)
+                .builder(totalOps, 250000000)
                 .build();
         //List<ResultSetFuture> results = new ArrayList<>(totalOps);
 

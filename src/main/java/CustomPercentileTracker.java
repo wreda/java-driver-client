@@ -106,7 +106,7 @@ public class CustomPercentileTracker implements LatencyTracker {
         if(this.finalHistogram == null)
             this.finalHistogram = histogram;
 
-        if (this.finalHistogram == null || this.finalHistogram.getTotalCount() < minRecordedValues) {
+        if (this.finalHistogram == null || this.finalHistogram.getTotalCount() < opsCounter) {
             System.out.println("total count " + this.finalHistogram.getTotalCount());
             System.out.println(this.finalHistogram);
             return -1;
@@ -155,6 +155,7 @@ public class CustomPercentileTracker implements LatencyTracker {
      */
     private Histogram getLastIntervalHistogram(Host host, Statement statement, Exception exception) {
         Object key = computeKey(host, statement, exception);
+
         if (key == null) {
             return null;
         }

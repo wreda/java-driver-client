@@ -1,3 +1,6 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -23,7 +26,7 @@ import misc.Utils;
 
 public class AsyncClient {
 
-    double MEMORY_READ_SATURATION_INTERARRIVAL=30; //interarrival required to saturate system for memory reads
+    double MEMORY_READ_SATURATION_INTERARRIVAL=300; //interarrival required to saturate system for memory reads
     double DISK_READ_SATURATION_INTERARRIVAL=100; //interarrival required to saturate system for disk reads
     int totalOps;
     int utilization;
@@ -32,6 +35,7 @@ public class AsyncClient {
     Cluster cluster;
     Session session;
     CustomPercentileTracker tracker;
+    BatchPercentileTracker batchTracker;
     boolean isRead; //Is this a run or load?
     FileGenerator filegen;
     IntegerGenerator bszGenerator;
@@ -43,7 +47,7 @@ public class AsyncClient {
     boolean isDebug = false;
     int seed = 46;
 
-    public static void main(String[] args) throws InterruptedException, ExecutionException {
+    public static void main(String[] args) throws InterruptedException, ExecutionException, IOException {
         AsyncClient client = new AsyncClient();
         CommandLine commandLine = client.parseArgs(args);
         System.out.println(commandLine.getOptions());
@@ -119,6 +123,10 @@ public class AsyncClient {
         tracker = CustomPercentileTracker
                 .builder(totalOps, 250000000)
                 .build();
+        batchTracker = BatchPercentileTracker
+                .builder(totalOps, 250000000)
+                .build();
+
         //List<ResultSetFuture> results = new ArrayList<>(totalOps);
 
         final long st_setup = System.nanoTime();
@@ -127,6 +135,7 @@ public class AsyncClient {
         //cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
         //cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
         cluster.register(tracker);
+        cluster.register(batchTracker);
 
         if(isDebug) {
             final LoadBalancingPolicy loadBalancingPolicy =
@@ -184,14 +193,14 @@ public class AsyncClient {
 
     }
 
-    public void runWorkload() throws InterruptedException, ExecutionException {
+    public void runWorkload() throws InterruptedException, ExecutionException, IOException {
         if(isRead)
             readData();
         else
             writeData();
     }
 
-    public void readData() throws InterruptedException, ExecutionException {
+    public void readData() throws InterruptedException, ExecutionException, IOException {
         final long st_trans = System.nanoTime();
         double compensation = 0;
         //List<ResultSetFuture> results = new ArrayList<ResultSetFuture>();
@@ -235,7 +244,8 @@ public class AsyncClient {
 
             int delay = arrivalGen.nextInt();
             //compensation += (delay - NANOSECONDS.toMicros(et_asynccall-st_asynccall));
-            MICROSECONDS.sleep(Math.min(delay-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
+            //System.out.println("Interarrival: " + delay + " Call Delay: " + NANOSECONDS.toMicros(et_asynccall-st_asynccall));
+            MICROSECONDS.sleep(Math.max(delay-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
 
 //            Futures.addCallback(rsf, new FutureCallback<ResultSet>() {
 //                @Override
@@ -252,8 +262,8 @@ public class AsyncClient {
             //results.add(rsf);
         }
         final long et_trans = System.nanoTime();
-        double duration = (et_trans - st_trans)/1.0E9;
-        System.out.println("Completed " + totalOps + " operations in " + duration + " seconds");
+
+        System.out.println("Completed " + totalOps + " operations in " + (et_trans - st_trans)/1.0E9 + " seconds");
 
         while(!tracker.isRunComplete() && NANOSECONDS.toSeconds(System.nanoTime() - tracker.getLastUpdateTS()) < 10)
         {
@@ -265,6 +275,7 @@ public class AsyncClient {
         //    if(r.get().all().size() == 0)
         //        notFoundCount += 1;
         //}
+        System.out.println("Experiment completed in " + (System.nanoTime() - st_trans)/1.0E9 + " seconds");
         System.out.println("[MULTIGET-SUCCESS] Count: " + tracker.getOpsCount());
         if(!tracker.isRunComplete())
             System.out.println("[MULTIGET-FAILURE] Count: " + (totalOps - tracker.getOpsCount()));
@@ -272,18 +283,41 @@ public class AsyncClient {
         //if(notFoundCount>0)
         //    System.out.println("[WARNING] " + notFoundCount + " successful requests returned an empty response");
 
+        double latency10Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 10);
+        double latency20Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 20);
+        double latency30Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 30);
+        double latency40Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 40);
         double latencyMedian = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 50);
         double latency95Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 95);
         double latency99Perc = tracker.getLatencyAtPercentile(cluster.getMetadata().getAllHosts().iterator().next(), null, null, 99);
 
         session.close();
         cluster.close();
-        System.out.println("[MULTIGET] Median Latency (us): " + latencyMedian);
+        System.out.println("[MULTIGET] 10th Percentile Latency (us): " + latency10Perc);
+        System.out.println("[MULTIGET] 20th Percentile Latency (us): " + latency20Perc);
+        System.out.println("[MULTIGET] 30th Percentile Latency (us): " + latency30Perc);
+        System.out.println("[MULTIGET] 40th Percentile Latency (us): " + latency40Perc);
+        System.out.println("[MULTIGET] 50th Percentile Latency (us): " + latencyMedian);
         System.out.println("[MULTIGET] 95th Percentile Latency (us): " + latency95Perc);
         System.out.println("[MULTIGET] 99th Percentile Latency (us): " + latency99Perc);
         System.out.println("Throughput: " + tracker.getOpsCount()/NANOSECONDS.toSeconds(tracker.getLastUpdateTS()
                             - st_trans) + " reqs/sec");
         System.out.println("Sending rate: " + totalOps/NANOSECONDS.toSeconds(et_trans - st_trans) + " reqs/sec");
+
+        String eol = System.getProperty("line.separator");
+        try (Writer writer = new FileWriter("batchStats.csv")) {
+            writer.append("size,latency").append(eol);
+            for (Map.Entry<Object, Double> entry : batchTracker.getAllLatenciesAtPercentile(50).entrySet()) {
+                writer.append(entry.getKey().toString())
+                        .append(',')
+                        .append(entry.getValue().toString())
+                        .append(eol);
+            }
+        } catch (IOException ex) {
+            ex.printStackTrace(System.err);
+        }
+        //System.out.println("Per Batch Size Latency results:");
+        //System.out.println(batchTracker.getAllLatenciesAtPercentile(50));
         System.out.println("All done");
     }
 

@@ -26,24 +26,26 @@ import misc.Utils;
 
 public class AsyncClient {
 
+    //Hardcoded values that should be adjusted based on cluster setup and underlying hardware
     double MEMORY_READ_SATURATION_INTERARRIVAL=300; //interarrival required to saturate system for memory reads
     double DISK_READ_SATURATION_INTERARRIVAL=100; //interarrival required to saturate system for disk reads
+
     int totalOps;
     int utilization;
-    int interarrival; //Interarrival time in Microseconds
-    int ceilOps;
+    int interarrival; //interarrival time in Microseconds
+    int ceilOps; //total number of rows
     Cluster cluster;
     Session session;
     CustomPercentileTracker tracker;
     BatchPercentileTracker batchTracker;
-    boolean isRead; //Is this a run or load?
+    boolean isRead; //workload is read-only
     FileGenerator filegen;
     IntegerGenerator bszGenerator;
     IntegerGenerator skwGenerator;
     IntegerGenerator valueGenerator;
-    IntegerGenerator arrivalGen;
+    IntegerGenerator arrivalGenerator;
     String hostIP;
-    boolean isTrace; //Workload is generated using a trace file
+    boolean isTrace; //workload is generated using a trace file
     boolean isDebug = false;
     int seed = 46;
 
@@ -86,7 +88,8 @@ public class AsyncClient {
 
         if(expScenario.equals("memory"))
         {
-            ceilOps = 100000;
+            //TODO Remove hardcoded values
+            ceilOps = 100000; //row count is 100k
             double compensation = isTrace ? 8 : bszGenerator.mean();
             if(isRead)
                 interarrival = (int)(MEMORY_READ_SATURATION_INTERARRIVAL / (((double)utilization)/100.0) / compensation);
@@ -95,7 +98,8 @@ public class AsyncClient {
         }
         else
         {
-            ceilOps = 250000000;
+            //TODO Remove hardcoded values
+            ceilOps = 250000000; //row count is 250m
             double compensation = isTrace ? 8 : bszGenerator.mean();
             if(isRead)
                 interarrival = (int) (DISK_READ_SATURATION_INTERARRIVAL /(((double)utilization)/100.0) / compensation);
@@ -113,27 +117,21 @@ public class AsyncClient {
         else if(valueDist.equals("constant"))
             valueGenerator = new ConstantGenerator(valueParam);
 
-        if(isRead)
-            arrivalGen = new PoissonGenerator(interarrival);
-        else
-            arrivalGen = new ConstantGenerator(interarrival);
+        arrivalGenerator = new ConstantGenerator(interarrival);
     }
 
     public void setupCluster() throws InterruptedException {
         tracker = CustomPercentileTracker
-                .builder(totalOps, 250000000)
+                .builder(totalOps, 250000000) //Set the highest trackable latency to an arbitrarily high value
                 .build();
         batchTracker = BatchPercentileTracker
                 .builder(totalOps, 250000000)
                 .build();
 
-        //List<ResultSetFuture> results = new ArrayList<>(totalOps);
-
         final long st_setup = System.nanoTime();
-        // Connect to the cluster and keyspace "demo"
+
         cluster = Cluster.builder().addContactPoint(hostIP).withPoolingOptions(createPoolingOptions()).build();
-        //cluster.getConfiguration().getPoolingOptions().setConnectionsPerHost(HostDistance.LOCAL, 100, 100);
-        //cluster.getConfiguration().getPoolingOptions().setMaxRequestsPerConnection(HostDistance.LOCAL, 50);
+
         cluster.register(tracker);
         cluster.register(batchTracker);
 
@@ -242,9 +240,7 @@ public class AsyncClient {
             ResultSetFuture rsf = session.executeAsync(stmt);
             long et_asynccall = System.nanoTime();
 
-            int delay = arrivalGen.nextInt();
-            //compensation += (delay - NANOSECONDS.toMicros(et_asynccall-st_asynccall));
-            //System.out.println("Interarrival: " + delay + " Call Delay: " + NANOSECONDS.toMicros(et_asynccall-st_asynccall));
+            int delay = arrivalGenerator.nextInt();
             MICROSECONDS.sleep(Math.max(delay-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
 
 //            Futures.addCallback(rsf, new FutureCallback<ResultSet>() {
@@ -275,6 +271,7 @@ public class AsyncClient {
         //    if(r.get().all().size() == 0)
         //        notFoundCount += 1;
         //}
+
         System.out.println("Experiment completed in " + (System.nanoTime() - st_trans)/1.0E9 + " seconds");
         System.out.println("[MULTIGET-SUCCESS] Count: " + tracker.getOpsCount());
         if(!tracker.isRunComplete())
@@ -316,8 +313,7 @@ public class AsyncClient {
         } catch (IOException ex) {
             ex.printStackTrace(System.err);
         }
-        //System.out.println("Per Batch Size Latency results:");
-        //System.out.println(batchTracker.getAllLatenciesAtPercentile(50));
+
         System.out.println("All done");
     }
 
@@ -335,7 +331,7 @@ public class AsyncClient {
             ResultSetFuture rsf = session.executeAsync(stmt);
             long et_asynccall = System.nanoTime();
 
-            int delay = arrivalGen.nextInt();
+            int delay = arrivalGenerator.nextInt();
             MICROSECONDS.sleep(Math.min(delay-NANOSECONDS.toMicros(et_asynccall-st_asynccall),0));
         }
         final long et_trans = System.nanoTime();
